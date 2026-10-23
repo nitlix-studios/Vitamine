@@ -72,7 +72,7 @@ export const tools = [
 	{
 		name: "tabs",
 		description:
-			"List every open tab in every window of the user's browser. * = active in its window, [lx] = opened by Vitamine. Use the ids as run's tabId, or tabs.get(id) inside a script.",
+			"List every open tab in every window of the user's browser. * = active in its window, [vt] = opened by Vitamine. Use the ids as run's tabId, or tabs.get(id) inside a script.",
 		inputSchema: { type: "object", properties: {} },
 	},
 	{
@@ -190,7 +190,7 @@ function formatTabs(tabs: Tab[]) {
 	return [...windows]
 		.map(
 			([windowId, list]) =>
-				`window ${windowId}\n${list.map((t) => `${t.active ? "*" : " "} ${t.id}${t.agent ? " [lx]" : ""}  ${t.title.slice(0, 80)} — ${t.url.slice(0, 120)}`).join("\n")}`,
+				`window ${windowId}\n${list.map((t) => `${t.active ? "*" : " "} ${t.id}${t.agent ? " [vt]" : ""}  ${t.title.slice(0, 80)} — ${t.url.slice(0, 120)}`).join("\n")}`,
 		)
 		.join("\n\n");
 }
