@@ -1,0 +1,23 @@
+{
+	"manifest_version": 3,
+	"name": "Vitamine",
+	"version": "0.1.0",
+	"description": "Lets the local Vitamine server drive this browser over the DevTools protocol.",
+	"permissions": [
+		"debugger",
+		"tabs",
+		"tabGroups",
+		"alarms",
+		"userScripts",
+		"cookies",
+		"storage"
+	],
+	"host_permissions": ["<all_urls>"],
+	"background": {
+		"service_worker": "dist/background.js",
+		"type": "module"
+	},
+	"action": {
+		"default_title": "Vitamine"
+	}
+}

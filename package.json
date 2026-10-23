@@ -1,0 +1,18 @@
+{
+	"name": "vitamine",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "bun run server/index.ts",
+		"dev": "bun --watch run server/index.ts",
+		"build": "bun build extension/src/background.ts --outdir extension/dist --target browser",
+		"watch": "bun build extension/src/background.ts --outdir extension/dist --target browser --watch",
+		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p extension"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.4.4",
+		"@types/chrome": "^0.3.6",
+		"typescript": "^7.0.2"
+	}
+}
