@@ -31,26 +31,30 @@ Requires [Bun](https://bun.sh) and a Chromium-based browser (Chrome, Vivaldi, Br
 git clone https://github.com/nitlix-studios/Vitamine
 cd Vitamine
 bun install
-bun run build   # compiles extension/src into extension/dist
+bun run build   # creates ~/.vitamine/token if needed and compiles extension/src into extension/dist
 bun run start   # or `bun run dev` to reload on change
 ```
+
+The token in `~/.vitamine/token` is the one secret everything shares: your MCP client sends it as a Bearer token, and the build bakes it into the extension so the two can prove themselves to each other. To rotate it, delete the file, run `bun run build`, reload the extension, restart the server and update your MCP client.
 
 ### Load the extension
 
 1. Open `chrome://extensions` (or `vivaldi://extensions`, etc.) and turn on **Developer mode**.
 2. Click **Load unpacked** and pick the `extension/` folder.
 3. On the extension's **Details** page, turn on **Allow User Scripts**. Fallback mode needs it (more on that below).
-4. The toolbar badge says **ON** once it's connected to the server.
+4. The toolbar badge says **ON** once it's connected to the server and the handshake has passed.
+
+The manifest pins the extension ID to `bmmhpjecmacoeiglmdeiiblgecgempil`, and the server only accepts that ID. If you loaded Vitamine before the ID was pinned, remove it and load it again. If you build your own copy with a different `key`, set `VITAMINE_EXTENSION_ID`.
 
 ### Connect your agent
 
 For Claude Code:
 
 ```bash
-claude mcp add --transport http --scope user vitamine http://127.0.0.1:9333/mcp
+claude mcp add --transport http --scope user vitamine http://127.0.0.1:9333/mcp --header "Authorization: Bearer $(cat ~/.vitamine/token)"
 ```
 
-Any other MCP client works too, just point it at `http://127.0.0.1:9333/mcp` over HTTP.
+Any other MCP client works too: point it at `http://127.0.0.1:9333/mcp` over HTTP and send `Authorization: Bearer <token>`.
 
 Quick sanity check:
 
@@ -158,7 +162,9 @@ The first comment line becomes the description. Run it with `run({ script: 'page
 Vitamine has access to your real logged-in browser, so it's worth knowing what it does and doesn't do:
 
 - The server only listens on `127.0.0.1` and rejects requests with any other `Host` header, which blocks DNS rebinding.
-- The extension socket only accepts connections from `chrome-extension://` origins.
+- `/mcp` needs the Bearer token from `~/.vitamine/token` (mode 600), so other programs and other users on the machine can't drive your browser.
+- The extension socket only accepts the pinned extension ID, and both sides sign each other's random nonce with the token (HMAC-SHA256) before any command flows. Another extension can't impersonate Vitamine, and the extension won't obey some other process listening on port 9333.
+- Scripts run in a separate JavaScript realm with no `Bun`, `process`, `require`, `fetch` or filesystem. They reach the browser only through the Vitamine globals, and anything they leave running is cut off when the run ends.
 - Auth headers and cookie values are redacted in output unless a script explicitly asks with `reveal: true`.
 - Other extensions' network traffic and console logs are hidden by default.
 - The agent is told that page content is data, not instructions, and to confirm with you before sending, buying, posting or deleting anything. Still, keep an eye on what it's doing.
@@ -191,10 +197,10 @@ bun run typecheck   # server and extension
 After rebuilding the extension, reload it without touching `chrome://extensions`:
 
 ```bash
-curl -X POST localhost:9333/reload-extension
+curl -X POST localhost:9333/reload-extension -H "Authorization: Bearer $(cat ~/.vitamine/token)"
 ```
 
-Set `VITAMINE_PORT` to run the server on something other than `9333` (you'll need to update the extension's socket URL to match).
+Set `VITAMINE_PORT` to run the server on something other than `9333` (you'll need to update the extension's socket URL to match). `VITAMINE_TOKEN` or `VITAMINE_TOKEN_FILE` override where the token comes from.
 
 ## License
 

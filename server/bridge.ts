@@ -16,7 +16,7 @@ const BLOCKED =
 
 // Owns the single WebSocket from the extension and turns it into request/response calls.
 class Bridge {
-	private socket: ServerWebSocket<unknown> | null = null;
+	private socket: ServerWebSocket<any> | null = null;
 	private pending = new Map<number, Pending>();
 	private nextId = 1;
 	private listeners = new Set<(event: BrowserEvent) => void>();
@@ -26,12 +26,14 @@ class Bridge {
 		return this.socket !== null;
 	}
 
-	open(ws: ServerWebSocket<unknown>) {
+	/** Only called once the socket has passed the handshake in index.ts. */
+	open(ws: ServerWebSocket<any>, info: Bridge["info"]) {
 		this.socket?.close(4000, "Replaced by a newer connection");
 		this.socket = ws;
+		this.info = info;
 	}
 
-	close(ws: ServerWebSocket<unknown>) {
+	close(ws: ServerWebSocket<any>) {
 		if (this.socket !== ws) {
 			return;
 		}
@@ -50,11 +52,6 @@ class Bridge {
 		try {
 			msg = JSON.parse(String(raw));
 		} catch {
-			return;
-		}
-
-		if (msg.type === "hello") {
-			this.info = { version: msg.version, userAgent: msg.userAgent };
 			return;
 		}
 

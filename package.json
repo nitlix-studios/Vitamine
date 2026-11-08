@@ -7,9 +7,11 @@
 	"scripts": {
 		"start": "bun run server/index.ts",
 		"dev": "bun --watch run server/index.ts",
-		"build": "bun build extension/src/background.ts --outdir extension/dist --target browser",
-		"watch": "bun build extension/src/background.ts --outdir extension/dist --target browser --watch",
-		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p extension"
+		"token": "bun run server/token.ts",
+		"build": "bun run token && bun build extension/src/background.ts --outdir extension/dist --target browser",
+		"watch": "bun run token && bun build extension/src/background.ts --outdir extension/dist --target browser --watch",
+		"typecheck": "bun run token && tsc --noEmit -p . && tsc --noEmit -p extension",
+		"mcpb": "bun run scripts/mcpb.ts"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.4.4",

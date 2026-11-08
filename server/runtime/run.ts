@@ -2,34 +2,7 @@ import { bridge } from "../bridge";
 import { listScripts, loadScript } from "../scripts";
 import { createCookies, createLogs, createNet } from "./net";
 import { newContext, Page, sleep, type RunContext } from "./page";
-
-type ScriptFn = (...args: unknown[]) => Promise<unknown>;
-const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
-	...args: string[]
-) => ScriptFn;
-const GLOBALS = [
-	"page",
-	"tabs",
-	"net",
-	"cookies",
-	"logs",
-	"scripts",
-	"sleep",
-	"log",
-	"args",
-] as const;
-
-// A lone expression returns its value (REPL-style); otherwise the code needs an explicit `return`.
-function compile(code: string) {
-	try {
-		return new AsyncFunction(
-			...GLOBALS,
-			`return (${code.trim().replace(/;+$/, "")}\n);`,
-		);
-	} catch {
-		return new AsyncFunction(...GLOBALS, code);
-	}
-}
+import sandbox from "./sandbox";
 
 const format = (item: unknown) =>
 	typeof item === "string" ? item : JSON.stringify(item);
@@ -44,7 +17,8 @@ function environment(
 	ctx: RunContext,
 	args: Record<string, unknown>,
 ) {
-	const env: Record<(typeof GLOBALS)[number], unknown> = {
+	// Scripts see these as globals; prelude.js wraps `scripts` so nested runs share the same sandbox.
+	return {
 		page,
 		tabs: {
 			list: () => bridge.call("tabs.list"),
@@ -72,23 +46,12 @@ function environment(
 		net: createNet(page),
 		cookies: createCookies(page),
 		logs: createLogs(page),
-		scripts: {
-			list: listScripts,
-			async run(name: string, scriptArgs: Record<string, unknown> = {}) {
-				const fn = compile(await loadScript(name));
-				return fn(
-					...GLOBALS.map((global) =>
-						global === "args" ? scriptArgs : env[global],
-					),
-				);
-			},
-		},
+		scripts: { list: listScripts, load: loadScript },
 		sleep,
 		log: (...items: unknown[]) =>
 			ctx.logs.push(items.map(format).join(" ")),
 		args,
 	};
-	return env;
 }
 
 export type RunInput = {
@@ -153,7 +116,6 @@ export default async function ({
 	timeoutMs = 60_000,
 }: RunInput): Promise<RunOutput> {
 	const ctx = newContext();
-	const fn = compile(code);
 	const page = new Page(tabId ?? (await activeTabId()), ctx);
 	const env = environment(page, ctx, args);
 	const before = await listTabs();
@@ -168,11 +130,9 @@ export default async function ({
 		);
 	});
 
+	const script = sandbox(code, env);
 	try {
-		const result = await Promise.race([
-			fn(...GLOBALS.map((global) => env[global])),
-			timeout,
-		]);
+		const result = await Promise.race([script.result, timeout]);
 		return { ok: true, result, ...ctx, changes: await finish() };
 	} catch (error) {
 		return {
@@ -183,5 +143,7 @@ export default async function ({
 		};
 	} finally {
 		clearTimeout(timer);
+		// Cuts off anything the script left running, so it can't keep driving the browser.
+		script.stop();
 	}
 }

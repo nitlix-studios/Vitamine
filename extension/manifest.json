@@ -2,6 +2,7 @@
 	"manifest_version": 3,
 	"name": "Vitamine",
 	"version": "0.1.0",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnHaQBl8mXsaMmUsoFn9WWWG6FBVbHUueF11vN6dqO1Z9IFoMw5/NYXjVBA9k86EOl24uqnhu5MGvV39MfBEYQ8kK/+GTSoGiuqmI0OtXOdG4cR+2B9raYae3d0flYzD8wqASv1CNIQh+x6NJcebuXua4unDzvl83mZffWS0wDx32FiF1vCfE6HSJ/xNQ8PX32/pT5Ao96S+nWAUviXY/sZAnKvl0Em7vXOFCA12iQ3jhyQTcZVZ8F/J1YTrk2sSijWLt/pHFq+DnxYsyWNnqSzshBJyzpLbDsBzky2pEeQwYUb5Epw9gabWsKcJhehGW4TEUujqCnDlKm3Uiio96aQIDAQAB",
 	"description": "Lets the local Vitamine server drive this browser over the DevTools protocol.",
 	"permissions": [
 		"debugger",

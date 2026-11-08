@@ -1,6 +1,8 @@
 // Thin relay: the Vitamine server sends commands over a WebSocket, this worker runs them with
 // chrome.tabs / chrome.debugger and streams DevTools events back.
 
+import TOKEN from "./token.gen";
+
 const SERVER = "ws://127.0.0.1:9333/ext";
 const VERSION = chrome.runtime.getManifest().version;
 const DOMAINS = ["Network.enable", "Runtime.enable", "Page.enable"];
@@ -20,6 +22,8 @@ const USER_SCRIPTS_OFF =
 	'Fallback mode needs user scripts: open Vitamine\'s Details page in the extensions list and turn on "Allow User Scripts"';
 
 let socket: WebSocket | null = null;
+// Commands are only obeyed once the server has proven it holds the token.
+let trusted = false;
 const attached = new Set<number>();
 const attaching = new Map<number, Promise<void>>();
 
@@ -52,7 +56,7 @@ let lastInput: { tabId: number; time: number } | undefined;
 const POPUP_WINDOW_MS = 3_000;
 
 function send(message: unknown) {
-	if (socket?.readyState !== WebSocket.OPEN) {
+	if (!trusted || socket?.readyState !== WebSocket.OPEN) {
 		return;
 	}
 	socket.send(JSON.stringify(message));
@@ -71,21 +75,71 @@ function connect() {
 	}
 
 	const ws = new WebSocket(SERVER);
+	const nonce = randomHex();
 	socket = ws;
-	ws.onopen = () => {
-		setBadge(true);
-		send({
-			type: "hello",
-			version: VERSION,
-			userAgent: navigator.userAgent,
-		});
+	trusted = false;
+	ws.onmessage = async (event) => {
+		const msg = JSON.parse(event.data);
+		if (trusted) {
+			handle(msg);
+			return;
+		}
+
+		// Handshake: sign the server's challenge, then check its signature over our nonce.
+		if (msg.type === "challenge" && typeof msg.nonce === "string") {
+			ws.send(
+				JSON.stringify({
+					type: "hello",
+					nonce,
+					proof: await sign("ext", msg.nonce),
+					version: VERSION,
+					userAgent: navigator.userAgent,
+				}),
+			);
+			return;
+		}
+
+		if (msg.type === "ready" && msg.proof === (await sign("srv", nonce))) {
+			trusted = true;
+			setBadge(true);
+			return;
+		}
+
+		ws.close(4003, "Server failed the handshake");
 	};
-	ws.onmessage = (event) => handle(JSON.parse(event.data));
 	ws.onclose = () => {
-		if (socket === ws) socket = null;
+		if (socket === ws) {
+			socket = null;
+			trusted = false;
+		}
 		setBadge(false);
 		setTimeout(connect, 2000);
 	};
+}
+
+function randomHex() {
+	return [...crypto.getRandomValues(new Uint8Array(16))]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+const hmacKey = crypto.subtle.importKey(
+	"raw",
+	new TextEncoder().encode(TOKEN),
+	{ name: "HMAC", hash: "SHA-256" },
+	false,
+	["sign"],
+);
+
+async function sign(label: "ext" | "srv", nonce: string) {
+	const mac = await crypto.subtle.sign(
+		"HMAC",
+		await hmacKey,
+		new TextEncoder().encode(`${label}:${nonce}`),
+	);
+	return [...new Uint8Array(mac)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
 }
 
 const tabInfo = (tab: chrome.tabs.Tab) => ({
