@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -9,30 +9,73 @@ import { dirname, join } from "node:path";
 export const MCP_COMMAND = [process.execPath, "run", join(import.meta.dir, "index.ts"), "mcp"];
 const NAME = "vitamine";
 
-export type Outcome = { client: string; result: "added" | "exists" | "skipped" | "failed"; note?: string };
+export type Outcome = { client: string; result: "added" | "exists" | "duplicate" | "skipped" | "failed"; note?: string };
+
+const run = (cmd: string, args: string[]) => spawnSync(cmd, args, { encoding: "utf8" });
+const works = (cmd: string) => !run(cmd, ["--version"]).error;
+
+function desktopDir() {
+	if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "Claude");
+	if (process.platform === "win32")
+		return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Claude");
+	return join(homedir(), ".config", "Claude");
+}
+
+// Newest copy of Claude Code that Claude Desktop keeps for its Code tab, which never lands on PATH.
+function desktopBundledClaude() {
+	const root = join(desktopDir(), "claude-code");
+	if (!existsSync(root)) return null;
+	const byVersion = (a: string, b: string) => b.localeCompare(a, undefined, { numeric: true });
+	for (const version of readdirSync(root).sort(byVersion)) {
+		for (const build of readdirSync(join(root, version))) {
+			const candidates = [
+				join(root, version, build, "claude.app", "Contents", "MacOS", "claude"),
+				join(root, version, build, "claude"),
+				join(root, version, build, "claude.exe"),
+			];
+			const found = candidates.find(existsSync);
+			if (found) return found;
+		}
+	}
+	return null;
+}
+
+/** Finds the `claude` CLI: PATH, the usual install locations, then Claude Desktop's own copy. */
+export function findClaude() {
+	const home = homedir();
+	const exe = process.platform === "win32" ? "claude.exe" : "claude";
+	const candidates = [
+		join(home, ".claude", "local", exe),
+		join(home, ".local", "bin", exe),
+		join(home, ".bun", "bin", exe),
+		join(home, ".npm-global", "bin", exe),
+		"/opt/homebrew/bin/claude",
+		"/usr/local/bin/claude",
+	];
+	if (works("claude")) return "claude";
+	return candidates.find((path) => existsSync(path) && works(path)) ?? desktopBundledClaude();
+}
 
 function claudeCode(): Outcome {
 	const client = "Claude Code";
-	const which = spawnSync("claude", ["--version"], { encoding: "utf8" });
-	if (which.error) return { client, result: "skipped", note: "`claude` isn't on PATH" };
+	const claude = findClaude();
+	if (!claude) return { client, result: "skipped", note: "not installed" };
 
-	if (spawnSync("claude", ["mcp", "get", NAME], { encoding: "utf8" }).status === 0)
-		return { client, result: "exists" };
+	if (run(claude, ["mcp", "get", NAME]).status === 0) return { client, result: "exists" };
 
 	const [command, ...args] = MCP_COMMAND;
-	const add = spawnSync("claude", ["mcp", "add", "--scope", "user", NAME, "--", command!, ...args], {
-		encoding: "utf8",
-	});
+	const add = run(claude, ["mcp", "add", "--scope", "user", NAME, "--", command!, ...args]);
 	if (add.status !== 0) return { client, result: "failed", note: (add.stderr || add.stdout).trim() };
 	return { client, result: "added" };
 }
 
-function desktopConfigPath() {
-	if (process.platform === "darwin")
-		return join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
-	if (process.platform === "win32")
-		return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
-	return join(homedir(), ".config", "Claude", "claude_desktop_config.json");
+const desktopConfigPath = () => join(desktopDir(), "claude_desktop_config.json");
+
+// A Vitamine .mcpb installed through Settings → Extensions already covers Desktop.
+function desktopExtension() {
+	const dir = join(desktopDir(), "Claude Extensions");
+	if (!existsSync(dir)) return null;
+	return readdirSync(dir).find((name) => /vitamine/i.test(name)) ?? null;
 }
 
 function claudeDesktop(): Outcome {
@@ -49,7 +92,16 @@ function claudeDesktop(): Outcome {
 		}
 	}
 	config.mcpServers ??= {};
-	if (NAME in config.mcpServers) return { client, result: "exists" };
+	const existing = Object.keys(config.mcpServers).find((key) => key.toLowerCase() === NAME);
+	const extension = desktopExtension();
+	if (existing && extension)
+		return {
+			client,
+			result: "duplicate",
+			note: "in claude_desktop_config.json and as an extension. Remove the extension in Settings → Extensions",
+		};
+	if (existing) return { client, result: "exists" };
+	if (extension) return { client, result: "exists", note: "as an extension" };
 
 	const [command, ...args] = MCP_COMMAND;
 	config.mcpServers[NAME] = { command, args };
@@ -63,8 +115,9 @@ export const registerClients = () => [claudeCode(), claudeDesktop()];
 export function unregisterClients() {
 	const removed: string[] = [];
 
-	const code = spawnSync("claude", ["mcp", "remove", "--scope", "user", NAME], { encoding: "utf8" });
-	if (!code.error && code.status === 0) removed.push("Claude Code");
+	const claude = findClaude();
+	if (claude && run(claude, ["mcp", "remove", "--scope", "user", NAME]).status === 0)
+		removed.push("Claude Code");
 
 	const path = desktopConfigPath();
 	if (!existsSync(path)) return removed;

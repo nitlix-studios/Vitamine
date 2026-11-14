@@ -163,7 +163,8 @@ async function install() {
 		for (const { client, result, note } of registerClients()) {
 			const suffix = note ? dim(` (${note})`) : "";
 			if (result === "added") ok(`Added to ${client}${suffix}`);
-			if (result === "exists") ok(`${client} already has it`);
+			if (result === "exists") ok(`${client} already has it${suffix}`);
+			if (result === "duplicate") warn(`${client} has Vitamine twice${suffix}`);
 			if (result === "failed") warn(`Couldn't add to ${client}${suffix}`);
 			if (result === "skipped") console.log(dim(`- ${client}: ${note}`));
 		}
