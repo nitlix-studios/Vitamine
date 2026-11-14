@@ -1,0 +1,115 @@
+# Publishes a release when a v* tag is pushed (`bun run release <version>` does that).
+#   npm:     vitamine-mcp via trusted publishing (OIDC, no token), with provenance
+#   GitHub:  a release with the extension zip attached
+#   Chrome:  uploads and submits the zip for review, once the CWS_* secrets exist
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Check the tag matches package.json and the manifest
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(jq -r .version package.json)
+          ext=$(jq -r .version extension/manifest.json)
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$ext" ]; then
+            echo "::error::Tag $tag, package.json $pkg and manifest $ext must match"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - run: bun run typecheck
+      - run: bun run zip
+      - run: bun pm pack --destination dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            dist/*.zip
+            dist/*.tgz
+
+  npm:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: release
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Update npm (trusted publishing needs 11.5.1+)
+        run: npm install -g npm@latest
+      - name: Publish
+        run: npm publish ./vitamine-mcp-${{ needs.build.outputs.version }}.tgz --access public
+
+  github:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: release
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            vitamine-extension-*.zip
+
+  chrome:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: chrome-web-store
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: release
+      - name: Upload and submit for review
+        env:
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          if [ -z "$EXTENSION_ID" ]; then
+            echo "::notice::No CWS_EXTENSION_ID secret yet; skipping the Chrome Web Store."
+            exit 0
+          fi
+          npx --yes chrome-webstore-upload-cli@3 \
+            --source vitamine-extension-*.zip \
+            --extension-id "$EXTENSION_ID" \
+            --client-id "$CLIENT_ID" \
+            --client-secret "$CLIENT_SECRET" \
+            --refresh-token "$REFRESH_TOKEN"

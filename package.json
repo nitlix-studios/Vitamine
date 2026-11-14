@@ -26,7 +26,9 @@
 		"watch": "bun build extension/src/background.ts --outdir extension/dist --target browser --watch",
 		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p extension",
 		"mcpb": "bun run scripts/mcpb.ts",
-		"icons": "bun run scripts/icons.ts"
+		"icons": "bun run scripts/icons.ts",
+		"zip": "bun run scripts/zip.ts",
+		"release": "bun run scripts/release.ts"
 	},
 	"devDependencies": {
 		"@resvg/resvg-js": "^2.6.2",

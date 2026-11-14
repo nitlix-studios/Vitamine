@@ -9,7 +9,6 @@ Let your AI agent drive your real browser. Your tabs, your cookies, your logins.
 
 <p>
   <a href="https://github.com/nitlix-studios/Vitamine/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/github/license/nitlix-studios/Vitamine.svg?style=for-the-badge&labelColor=000000" height="28"></a>
-  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-0a0a0a.svg?style=for-the-badge&labelColor=000000" height="28">
   <a href="https://www.npmjs.com/package/vitamine-mcp"><img alt="npm" src="https://img.shields.io/npm/v/vitamine-mcp.svg?style=for-the-badge&labelColor=000000&color=0a0a0a" height="28"></a>
   <img alt="MCP" src="https://img.shields.io/badge/MCP-HTTP%20%2B%20stdio-0a0a0a.svg?style=for-the-badge&labelColor=000000" height="28">
 </p>
