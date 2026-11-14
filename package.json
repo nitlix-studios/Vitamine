@@ -1,6 +1,6 @@
 {
 	"name": "vitamine-mcp",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Let your AI agent drive your real browser: your tabs, cookies and logins, over MCP.",
 	"license": "Apache-2.0",
 	"type": "module",
