@@ -46,6 +46,6 @@ await bump(MANIFEST);
 
 await $`git add ${PKG} ${MANIFEST}`.cwd(ROOT);
 await $`git commit -m ${`release: v${version}`}`.cwd(ROOT);
-await $`git tag v${version}`.cwd(ROOT);
+await $`git tag -a v${version} -m ${`v${version}`}`.cwd(ROOT);
 await $`git push origin HEAD v${version}`.cwd(ROOT);
 console.log(`Pushed v${version}. Follow it at https://github.com/nitlix-studios/Vitamine/actions`);
