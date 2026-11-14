@@ -1,19 +1,35 @@
 {
-	"name": "vitamine",
+	"name": "vitamine-mcp",
 	"version": "0.1.0",
-	"private": true,
+	"description": "Let your AI agent drive your real browser: your tabs, cookies and logins, over MCP.",
 	"license": "Apache-2.0",
 	"type": "module",
+	"author": "Nitlix",
+	"homepage": "https://github.com/nitlix-studios/Vitamine#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/nitlix-studios/Vitamine.git"
+	},
+	"bugs": "https://github.com/nitlix-studios/Vitamine/issues",
+	"keywords": ["mcp", "browser", "automation", "chrome", "claude", "agent"],
+	"bin": {
+		"vitamine-mcp": "cli/index.ts"
+	},
+	"files": ["cli", "server", "README.md", "LICENSE"],
+	"engines": {
+		"bun": ">=1.2"
+	},
 	"scripts": {
 		"start": "bun run server/index.ts",
 		"dev": "bun --watch run server/index.ts",
-		"token": "bun run server/token.ts",
-		"build": "bun run token && bun build extension/src/background.ts --outdir extension/dist --target browser",
-		"watch": "bun run token && bun build extension/src/background.ts --outdir extension/dist --target browser --watch",
-		"typecheck": "bun run token && tsc --noEmit -p . && tsc --noEmit -p extension",
-		"mcpb": "bun run scripts/mcpb.ts"
+		"build": "bun build extension/src/background.ts --outdir extension/dist --target browser",
+		"watch": "bun build extension/src/background.ts --outdir extension/dist --target browser --watch",
+		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p extension",
+		"mcpb": "bun run scripts/mcpb.ts",
+		"icons": "bun run scripts/icons.ts"
 	},
 	"devDependencies": {
+		"@resvg/resvg-js": "^2.6.2",
 		"@types/bun": "^1.4.4",
 		"@types/chrome": "^0.3.6",
 		"typescript": "^7.0.2"

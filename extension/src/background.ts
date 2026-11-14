@@ -1,9 +1,11 @@
 // Thin relay: the Vitamine server sends commands over a WebSocket, this worker runs them with
 // chrome.tabs / chrome.debugger and streams DevTools events back.
 
-import TOKEN from "./token.gen";
-
-const SERVER = "ws://127.0.0.1:9333/ext";
+const PORT = 9333;
+const SERVER = `ws://127.0.0.1:${PORT}/ext`;
+// The only page allowed to hand us a token: the pair page served by the local Vitamine server.
+const PAIR_ORIGIN = `http://127.0.0.1:${PORT}`;
+const HANDSHAKE_MS = 6_000;
 const VERSION = chrome.runtime.getManifest().version;
 const DOMAINS = ["Network.enable", "Runtime.enable", "Page.enable"];
 const FORWARD = new Set([
@@ -21,9 +23,11 @@ type Clip = { x: number; y: number; w: number; h: number };
 const USER_SCRIPTS_OFF =
 	'Fallback mode needs user scripts: open Vitamine\'s Details page in the extensions list and turn on "Allow User Scripts"';
 
+// The live, authenticated connection. Only set once the server has proven it holds the token.
 let socket: WebSocket | null = null;
-// Commands are only obeyed once the server has proven it holds the token.
-let trusted = false;
+// HMAC key derived from the paired token; null until `vitamine-mcp pair` has run.
+let key: CryptoKey | null = null;
+let connecting = false;
 const attached = new Set<number>();
 const attaching = new Map<number, Promise<void>>();
 
@@ -56,66 +60,146 @@ let lastInput: { tabId: number; time: number } | undefined;
 const POPUP_WINDOW_MS = 3_000;
 
 function send(message: unknown) {
-	if (!trusted || socket?.readyState !== WebSocket.OPEN) {
+	if (socket?.readyState !== WebSocket.OPEN) {
 		return;
 	}
 	socket.send(JSON.stringify(message));
 }
 
-function setBadge(on: boolean) {
-	chrome.action.setBadgeText({ text: on ? "ON" : "OFF" });
-	chrome.action.setBadgeBackgroundColor({
-		color: on ? "#16a34a" : "#737373",
+function setBadge() {
+	const [text, color] = !key
+		? ["SET", "#d97706"]
+		: socket
+			? ["ON", "#16a34a"]
+			: ["OFF", "#737373"];
+	chrome.action.setBadgeText({ text });
+	chrome.action.setBadgeBackgroundColor({ color });
+	chrome.action.setTitle({
+		title: !key
+			? "Vitamine: not linked. Run `vitamine-mcp pair`"
+			: socket
+				? "Vitamine: connected"
+				: "Vitamine: waiting for the local server",
 	});
 }
 
-function connect() {
-	if (socket && socket.readyState !== WebSocket.CLOSED) {
+type Attempt = { ok: true } | { ok: false; reason: "unreachable" | "rejected" | "timeout" };
+
+// Opens a socket and runs the mutual handshake with `withKey`. On success it becomes the live socket,
+// replacing any older one; on failure nothing about the current connection changes.
+function open(withKey: CryptoKey) {
+	return new Promise<Attempt>((resolve) => {
+		const ws = new WebSocket(SERVER);
+		const nonce = randomHex();
+		let challenged = false;
+		let settled = false;
+		const settle = (result: Attempt) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(result);
+		};
+		const timer = setTimeout(() => {
+			settle({ ok: false, reason: "timeout" });
+			ws.close();
+		}, HANDSHAKE_MS);
+
+		ws.onmessage = async (event) => {
+			const msg = JSON.parse(event.data);
+			if (ws === socket) {
+				handle(msg);
+				return;
+			}
+
+			// Handshake: sign the server's challenge, then check its signature over our nonce.
+			if (msg.type === "challenge" && typeof msg.nonce === "string") {
+				challenged = true;
+				ws.send(
+					JSON.stringify({
+						type: "hello",
+						nonce,
+						proof: await sign(withKey, "ext", msg.nonce),
+						version: VERSION,
+						userAgent: navigator.userAgent,
+					}),
+				);
+				return;
+			}
+
+			if (msg.type === "ready" && msg.proof === (await sign(withKey, "srv", nonce))) {
+				const previous = socket;
+				socket = ws;
+				previous?.close(1000, "Replaced");
+				setBadge();
+				settle({ ok: true });
+				return;
+			}
+
+			ws.close(4003, "Server failed the handshake");
+		};
+		ws.onclose = () => {
+			settle({ ok: false, reason: challenged ? "rejected" : "unreachable" });
+			if (socket !== ws) return;
+			socket = null;
+			setBadge();
+			setTimeout(connect, 2000);
+		};
+	});
+}
+
+async function connect() {
+	if (!key || socket || connecting) {
 		return;
 	}
-
-	const ws = new WebSocket(SERVER);
-	const nonce = randomHex();
-	socket = ws;
-	trusted = false;
-	ws.onmessage = async (event) => {
-		const msg = JSON.parse(event.data);
-		if (trusted) {
-			handle(msg);
-			return;
-		}
-
-		// Handshake: sign the server's challenge, then check its signature over our nonce.
-		if (msg.type === "challenge" && typeof msg.nonce === "string") {
-			ws.send(
-				JSON.stringify({
-					type: "hello",
-					nonce,
-					proof: await sign("ext", msg.nonce),
-					version: VERSION,
-					userAgent: navigator.userAgent,
-				}),
-			);
-			return;
-		}
-
-		if (msg.type === "ready" && msg.proof === (await sign("srv", nonce))) {
-			trusted = true;
-			setBadge(true);
-			return;
-		}
-
-		ws.close(4003, "Server failed the handshake");
-	};
-	ws.onclose = () => {
-		if (socket === ws) {
-			socket = null;
-			trusted = false;
-		}
-		setBadge(false);
-		setTimeout(connect, 2000);
-	};
+	connecting = true;
+	const result = await open(key);
+	connecting = false;
+	if (!result.ok) setTimeout(connect, 2000);
 }
+
+const importKey = (token: string) =>
+	crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(token),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+
+// The token is only kept if the running server proves it holds the same one, so a page can't
+// pair us with a token of its choosing.
+async function pair(token: unknown) {
+	if (typeof token !== "string" || !/^[\w-]{20,200}$/.test(token)) {
+		return { ok: false, error: "That link doesn't contain a valid token." };
+	}
+	const candidate = await importKey(token);
+	const result = await open(candidate);
+	if (!result.ok) {
+		const error = {
+			unreachable: "The Vitamine server isn't reachable. Start it with `vitamine-mcp start`.",
+			rejected: "The server rejected this token. Run `vitamine-mcp pair` again for a fresh link.",
+			timeout: "The server didn't answer in time. Check `vitamine-mcp status`.",
+		}[result.reason];
+		return { ok: false, error };
+	}
+	key = candidate;
+	await chrome.storage.local.set({ token });
+	setBadge();
+	return { ok: true, ...linkState() };
+}
+
+const linkState = () => ({
+	paired: key !== null,
+	connected: socket !== null,
+	version: VERSION,
+	userAgent: navigator.userAgent,
+});
+
+const loaded = (async () => {
+	const { token } = await chrome.storage.local.get("token");
+	if (typeof token === "string") key = await importKey(token);
+	setBadge();
+})();
 
 function randomHex() {
 	return [...crypto.getRandomValues(new Uint8Array(16))]
@@ -123,18 +207,10 @@ function randomHex() {
 		.join("");
 }
 
-const hmacKey = crypto.subtle.importKey(
-	"raw",
-	new TextEncoder().encode(TOKEN),
-	{ name: "HMAC", hash: "SHA-256" },
-	false,
-	["sign"],
-);
-
-async function sign(label: "ext" | "srv", nonce: string) {
+async function sign(withKey: CryptoKey, label: "ext" | "srv", nonce: string) {
 	const mac = await crypto.subtle.sign(
 		"HMAC",
-		await hmacKey,
+		withKey,
 		new TextEncoder().encode(`${label}:${nonce}`),
 	);
 	return [...new Uint8Array(mac)]
@@ -451,6 +527,25 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 	send({ type: "event", tabId, method: "Vitamine.tabClosed", params: {} });
 });
 
+// Only the local pair page may talk to us (see externally_connectable in the manifest).
+chrome.runtime.onMessageExternal.addListener((message, sender, respond) => {
+	if (sender.origin !== PAIR_ORIGIN) {
+		return;
+	}
+	(async () => {
+		await loaded;
+		if (message?.type === "pair") return pair(message.token);
+		if (message?.type === "status") return linkState();
+		return { ok: false, error: "Unknown request" };
+	})().then(respond);
+	return true;
+});
+
+// The toolbar button opens the pair page, which shows whether everything is linked.
+chrome.action.onClicked.addListener(() => {
+	chrome.tabs.create({ url: `${PAIR_ORIGIN}/pair` });
+});
+
 // Traffic every 20s keeps the MV3 worker alive; the alarm revives it if it was stopped anyway.
 setInterval(() => send({ type: "ping" }), 20_000);
 chrome.alarms.create("vitamine-reconnect", { periodInMinutes: 0.5 });
@@ -461,5 +556,4 @@ chrome.runtime.onStartup.addListener(() => {
 });
 chrome.runtime.onInstalled.addListener(connect);
 
-setBadge(false);
-connect();
+loaded.then(connect);

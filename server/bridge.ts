@@ -20,7 +20,7 @@ class Bridge {
 	private pending = new Map<number, Pending>();
 	private nextId = 1;
 	private listeners = new Set<(event: BrowserEvent) => void>();
-	info: { version?: string; userAgent?: string } = {};
+	info: { version?: string; userAgent?: string; connectedAt?: number } = {};
 
 	get connected() {
 		return this.socket !== null;

@@ -115,7 +115,7 @@ export const tools = [
 	{
 		name: "scripts_save",
 		description:
-			"Save a reusable script as scripts/<name>.js. It gets the same globals as run, plus `args`. Run it with run({script:name, args}) or scripts.run(name, args) from other code. Saving an existing name overwrites it.",
+			"Save a reusable script as ~/.vitamine/scripts/<name>.js. It gets the same globals as run, plus `args`. Run it with run({script:name, args}) or scripts.run(name, args) from other code. Saving an existing name overwrites it.",
 		inputSchema: {
 			type: "object",
 			properties: {

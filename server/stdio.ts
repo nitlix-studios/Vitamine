@@ -1,24 +1,11 @@
-import { spawn } from "node:child_process";
-import { mkdirSync, openSync } from "node:fs";
-import { join } from "node:path";
-import { TOKEN, TOKEN_PATH } from "./token";
+import { alive, startDetached } from "./daemon";
+import { BASE, LOG_FILE } from "./paths";
+import { TOKEN } from "./token";
 
-// Stdio front end for clients that only launch local MCP servers (Claude Desktop, .mcpb).
+// Stdio front end for clients that only launch local MCP servers (Claude Desktop, `vitamine-mcp mcp`).
 // It forwards each JSON-RPC line to the shared HTTP server, starting that server if nobody else has,
 // so Desktop, Claude Code and the extension all meet on one process.
-const PORT = Number(process.env.VITAMINE_PORT ?? 9333);
-const BASE = `http://127.0.0.1:${PORT}`;
-const LOG = join(TOKEN_PATH, "..", "server.log");
-
 const log = (...args: unknown[]) => console.error("[vitamine]", ...args);
-
-async function alive() {
-	try {
-		return (await fetch(`${BASE}/health`)).ok;
-	} catch {
-		return false;
-	}
-}
 
 let starting: Promise<void> | null = null;
 
@@ -27,30 +14,12 @@ async function ensureServer() {
 	if (await alive()) {
 		return;
 	}
-	starting ??= startServer().finally(() => {
-		starting = null;
-	});
+	starting ??= startDetached()
+		.then(() => log(`started server, logging to ${LOG_FILE}`))
+		.finally(() => {
+			starting = null;
+		});
 	return starting;
-}
-
-async function startServer() {
-	mkdirSync(join(LOG, ".."), { recursive: true });
-	const out = openSync(LOG, "a");
-	// Detached so it outlives this client and keeps serving the others.
-	spawn(process.execPath, ["run", join(import.meta.dir, "index.ts")], {
-		detached: true,
-		stdio: ["ignore", out, out],
-		env: process.env,
-	}).unref();
-	log(`started server, logging to ${LOG}`);
-
-	for (let i = 0; i < 50; i++) {
-		await Bun.sleep(100);
-		if (await alive()) {
-			return;
-		}
-	}
-	throw new Error(`Vitamine server did not come up on ${BASE}; see ${LOG}`);
 }
 
 async function forward(line: string) {

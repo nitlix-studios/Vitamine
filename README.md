@@ -1,11 +1,17 @@
-# Vitamine
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nitlix-studios/Vitamine/main/assets/wordmark-white.svg">
+    <img alt="Vitamine" src="https://raw.githubusercontent.com/nitlix-studios/Vitamine/main/assets/wordmark-black.svg" height="48">
+  </picture>
+</h1>
 
 Let your AI agent drive your real browser. Your tabs, your cookies, your logins.
 
 <p>
   <a href="https://github.com/nitlix-studios/Vitamine/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/github/license/nitlix-studios/Vitamine.svg?style=for-the-badge&labelColor=000000" height="28"></a>
   <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-0a0a0a.svg?style=for-the-badge&labelColor=000000" height="28">
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-HTTP-0a0a0a.svg?style=for-the-badge&labelColor=000000" height="28">
+  <a href="https://www.npmjs.com/package/vitamine-mcp"><img alt="npm" src="https://img.shields.io/npm/v/vitamine-mcp.svg?style=for-the-badge&labelColor=000000&color=0a0a0a" height="28"></a>
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-HTTP%20%2B%20stdio-0a0a0a.svg?style=for-the-badge&labelColor=000000" height="28">
 </p>
 
 Most browser automation tools spin up a fresh, empty Chromium. That's great for tests, and pretty useless when you want an agent to check your orders, poke around an admin dashboard, or reproduce a bug you're logged in to see. Vitamine goes the other way: a tiny Chrome extension plus a local Bun server that exposes your actual browser to Claude (or any MCP client).
@@ -21,46 +27,46 @@ Claude ──HTTP MCP──> bun server (127.0.0.1:9333) ──WebSocket──> 
 - **Human-style targeting.** Point at things the way you would describe them: `page.click('Save')`, `page.fill('Email', 'a@b.c')`, `{ role: 'button', text: 'Download', near: 'Invoice #123' }`.
 - **Stays out of your way.** Agent tabs open in the background, grouped under a "Vitamine" tab group, so you can keep working.
 - **Network, console and cookies built in.** Inspect, replay and fetch requests with the page's own auth.
-- **Reusable scripts.** Flows worth repeating get saved to `scripts/` and run by name.
+- **Reusable scripts.** Flows worth repeating get saved to `~/.vitamine/scripts/` and run by name.
 
 ## Installation
 
 Requires [Bun](https://bun.sh) and a Chromium-based browser (Chrome, Vivaldi, Brave, Edge, Arc...).
 
 ```bash
-git clone https://github.com/nitlix-studios/Vitamine
-cd Vitamine
-bun install
-bun run build   # creates ~/.vitamine/token if needed and compiles extension/src into extension/dist
-bun run start   # or `bun run dev` to reload on change
+bunx vitamine-mcp install
 ```
 
-The token in `~/.vitamine/token` is the one secret everything shares: your MCP client sends it as a Bearer token, and the build bakes it into the extension so the two can prove themselves to each other. To rotate it, delete the file, run `bun run build`, reload the extension, restart the server and update your MCP client.
+That one command:
 
-### Load the extension
+1. Installs `vitamine-mcp` globally and starts the server at login (a LaunchAgent on macOS, a systemd user service on Linux).
+2. Registers Vitamine with Claude Code and Claude Desktop, if you have them.
+3. Opens a page in your browser that links the extension to the server.
 
-1. Open `chrome://extensions` (or `vivaldi://extensions`, etc.) and turn on **Developer mode**.
-2. Click **Load unpacked** and pick the `extension/` folder.
-3. On the extension's **Details** page, turn on **Allow User Scripts**. Fallback mode needs it (more on that below).
-4. The toolbar badge says **ON** once it's connected to the server and the handshake has passed.
+### Install the extension
 
-The manifest pins the extension ID to `bmmhpjecmacoeiglmdeiiblgecgempil`, and the server only accepts that ID. If you loaded Vitamine before the ID was pinned, remove it and load it again. If you build your own copy with a different `key`, set `VITAMINE_EXTENSION_ID`.
+1. Install Vitamine from the Chrome Web Store *(listing coming soon)*, or load it unpacked from a checkout (see [Development](#development)).
+2. On the extension's **Details** page, turn on **Allow User Scripts**. Fallback mode needs it (more on that below).
+3. Run `vitamine-mcp pair` if you installed the extension after `install`. The toolbar badge says **ON** once it's linked, and clicking it shows the link status.
 
-### Connect your agent
-
-For Claude Code:
+### The CLI
 
 ```bash
-claude mcp add --transport http --scope user vitamine http://127.0.0.1:9333/mcp --header "Authorization: Bearer $(cat ~/.vitamine/token)"
+vitamine-mcp status        # server, autostart and extension at a glance
+vitamine-mcp pair          # link the extension (again)
+vitamine-mcp start | stop | restart
+vitamine-mcp logs -f
+vitamine-mcp rotate-token  # new token, restart, re-pair
+vitamine-mcp uninstall     # removes autostart and client entries, keeps ~/.vitamine
 ```
 
-Any other MCP client works too: point it at `http://127.0.0.1:9333/mcp` over HTTP and send `Authorization: Bearer <token>`.
+### Connect other agents
 
-Quick sanity check:
+`install` adds Vitamine to Claude Code and Claude Desktop as a stdio server (`vitamine-mcp mcp`), which reads the token from disk. Any other MCP client can either launch that command or talk HTTP to `http://127.0.0.1:9333/mcp` with `Authorization: Bearer $(cat ~/.vitamine/token)`.
 
-```bash
-curl localhost:9333/health
-```
+### How pairing works
+
+`~/.vitamine/token` (mode 600) is the one secret everything shares. MCP clients send it as a Bearer token, and the extension uses it to sign a mutual handshake with the server. The extension gets it once: `vitamine-mcp pair` opens `http://127.0.0.1:9333/pair#<token>`. The token sits in the URL fragment, which browsers never send to a server. The page passes it to the extension, which only keeps it after the running server proves it holds the same token. Only that local page can message the extension, so a website can't pair it with a token of its own.
 
 ## Quick start
 
@@ -91,7 +97,7 @@ The MCP server exposes four tools:
 | `tabs`         | Lists every tab in every window. `*` marks the active one.                |
 | `run`          | Runs an async JS script against a tab (the active one by default).        |
 | `scripts_list` | Lists saved scripts.                                                      |
-| `scripts_save` | Saves a reusable script to `scripts/<name>.js`.                           |
+| `scripts_save` | Saves a reusable script to `~/.vitamine/scripts/<name>.js`.               |
 
 Inside `run`, scripts get these globals: `page`, `tabs`, `net`, `cookies`, `logs`, `scripts`, `sleep`, `log` and `args`.
 
@@ -146,7 +152,7 @@ The full API reference lives in the `run` tool description in [server/tools.ts](
 
 ## Saved scripts
 
-Anything you do more than twice can become a script. Ask the agent to save one, or drop a file into `scripts/`:
+Anything you do more than twice can become a script. Ask the agent to save one, or drop a file into `~/.vitamine/scripts/`:
 
 ```js
 // Headings and links of the current page. args: {limit?: number}
@@ -163,6 +169,7 @@ Vitamine has access to your real logged-in browser, so it's worth knowing what i
 
 - The server only listens on `127.0.0.1` and rejects requests with any other `Host` header, which blocks DNS rebinding.
 - `/mcp` needs the Bearer token from `~/.vitamine/token` (mode 600), so other programs and other users on the machine can't drive your browser.
+- The extension only accepts a token from the local pair page, and only after the server proves it holds it.
 - The extension socket only accepts the pinned extension ID, and both sides sign each other's random nonce with the token (HMAC-SHA256) before any command flows. Another extension can't impersonate Vitamine, and the extension won't obey some other process listening on port 9333.
 - Scripts run in a separate JavaScript realm with no `Bun`, `process`, `require`, `fetch` or filesystem. They reach the browser only through the Vitamine globals, and anything they leave running is cut off when the run ends.
 - Auth headers and cookie values are redacted in output unless a script explicitly asks with `reveal: true`.
@@ -189,10 +196,17 @@ Chrome refuses to attach the debugger to pages where another extension (say, a p
 ## Development
 
 ```bash
+git clone https://github.com/nitlix-studios/Vitamine
+cd Vitamine
+bun install
+bun run build       # compiles extension/src into extension/dist
 bun run dev         # server with reload on change
 bun run watch       # rebuild the extension on change
-bun run typecheck   # server and extension
+bun run typecheck   # server, CLI and extension
+bun cli/index.ts    # the CLI from the checkout (install, pair, status...)
 ```
+
+Load the extension unpacked: open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `extension/`. Then run `bun cli/index.ts pair`. The manifest pins the extension ID to `bmmhpjecmacoeiglmdeiiblgecgempil`, and the server only accepts the IDs in [server/paths.ts](server/paths.ts). If you build your own copy with a different `key`, set `VITAMINE_EXTENSION_ID` (comma-separated for several).
 
 After rebuilding the extension, reload it without touching `chrome://extensions`:
 
@@ -200,7 +214,7 @@ After rebuilding the extension, reload it without touching `chrome://extensions`
 curl -X POST localhost:9333/reload-extension -H "Authorization: Bearer $(cat ~/.vitamine/token)"
 ```
 
-Set `VITAMINE_PORT` to run the server on something other than `9333` (you'll need to update the extension's socket URL to match). `VITAMINE_TOKEN` or `VITAMINE_TOKEN_FILE` override where the token comes from.
+Environment overrides: `VITAMINE_PORT` (the extension's socket URL is fixed to `9333`, so change it there too), `VITAMINE_HOME` (defaults to `~/.vitamine`), `VITAMINE_TOKEN` / `VITAMINE_TOKEN_FILE`, `VITAMINE_SCRIPTS_DIR`.
 
 ## License
 

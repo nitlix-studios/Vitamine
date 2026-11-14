@@ -1,15 +1,38 @@
 import { randomBytes } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bridge } from "./bridge";
+import { alive } from "./daemon";
 import handleMcp from "./mcp";
+import { BASE, EXTENSION_IDS, HOME, PID_FILE, PORT } from "./paths";
 import "./store";
 import { authorized, proof, proofMatches, TOKEN_PATH } from "./token";
 
-const PORT = Number(process.env.VITAMINE_PORT ?? 9333);
 // Blocks DNS-rebinding: only requests addressed to localhost itself are served.
 const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
-// Pinned by the `key` in extension/manifest.json. Origin is only a first filter (local processes can
-// forge it); the HMAC handshake below is what actually proves the other side holds the token.
-const EXTENSION_ORIGIN = `chrome-extension://${process.env.VITAMINE_EXTENSION_ID ?? "bmmhpjecmacoeiglmdeiiblgecgempil"}`;
+// Origin is only a first filter (local processes can forge it); the HMAC handshake below is what
+// actually proves the other side holds the token.
+const EXTENSION_ORIGINS = new Set(EXTENSION_IDS.map((id) => `chrome-extension://${id}`));
+// The token never goes into this page: `vitamine-mcp pair` puts it in the URL fragment, which the
+// browser keeps to itself, and the page hands it straight to the extension.
+const PAIR_PAGE = (await Bun.file(join(import.meta.dir, "pair.html")).text()).replace(
+	"__EXTENSION_IDS__",
+	JSON.stringify(EXTENSION_IDS),
+);
+const PAIR_HEADERS = {
+	"content-type": "text/html; charset=utf-8",
+	"cache-control": "no-store",
+	"referrer-policy": "no-referrer",
+	"x-frame-options": "DENY",
+	"content-security-policy":
+		"default-src 'none'; img-src data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+};
+
+// Autostart and on-demand starts can race; whoever loses steps aside quietly.
+if (await alive()) {
+	console.log(`Vitamine is already running on ${BASE}`);
+	process.exit(0);
+}
 const HANDSHAKE_MS = 5_000;
 
 type Socket = { nonce: string; authed: boolean; timer?: Timer };
@@ -20,7 +43,7 @@ const unauthorized = () =>
 		headers: { "WWW-Authenticate": 'Bearer realm="vitamine"' },
 	});
 
-Bun.serve<Socket>({
+const server = Bun.serve<Socket>({
 	hostname: "127.0.0.1",
 	port: PORT,
 	idleTimeout: 255, // long scripts keep the MCP request open
@@ -32,7 +55,7 @@ Bun.serve<Socket>({
 		const { pathname } = new URL(req.url);
 
 		if (pathname === "/ext") {
-			if (req.headers.get("origin") !== EXTENSION_ORIGIN) {
+			if (!EXTENSION_ORIGINS.has(req.headers.get("origin") ?? "")) {
 				console.log(`rejected /ext origin: ${req.headers.get("origin")}`);
 				return new Response("Forbidden", { status: 403 });
 			}
@@ -62,9 +85,15 @@ Bun.serve<Socket>({
 
 		if (pathname === "/health") {
 			return Response.json({
+				vitamine: true,
+				pid: process.pid,
 				connected: bridge.connected,
 				extension: bridge.info,
 			});
+		}
+
+		if (pathname === "/pair") {
+			return new Response(PAIR_PAGE, { headers: PAIR_HEADERS });
 		}
 
 		return new Response("Not found", { status: 404 });
@@ -102,7 +131,11 @@ Bun.serve<Socket>({
 			clearTimeout(ws.data.timer);
 			ws.data.authed = true;
 			ws.send(JSON.stringify({ type: "ready", proof: proof("srv", hello.nonce) }));
-			bridge.open(ws, { version: hello.version, userAgent: hello.userAgent });
+			bridge.open(ws, {
+				version: hello.version,
+				userAgent: hello.userAgent,
+				connectedAt: Date.now(),
+			});
 			console.log("extension connected");
 		},
 		close(ws) {
@@ -113,6 +146,16 @@ Bun.serve<Socket>({
 		},
 	},
 });
+
+mkdirSync(HOME, { recursive: true, mode: 0o700 });
+writeFileSync(PID_FILE, `${process.pid}\n`);
+const shutdown = () => {
+	rmSync(PID_FILE, { force: true });
+	server.stop(true);
+	process.exit(0);
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 console.log(
 	`Vitamine on http://127.0.0.1:${PORT}: MCP at /mcp, extension socket at /ext. Token: ${TOKEN_PATH}`,

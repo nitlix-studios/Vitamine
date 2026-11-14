@@ -1,7 +1,6 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-
-const DIR = join(import.meta.dir, "..", "scripts");
+import { SCRIPTS_DIR as DIR } from "./paths";
 const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 
 function pathFor(name: string) {
